@@ -14,54 +14,125 @@ const { MongoClient } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Environment Variables (Set these on your server/hosting platform)
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/billkaro';
-const DB_NAME = process.env.DB_NAME || 'billkaro';
-const GATEWAY_AUTH_TOKEN = process.env.GATEWAY_AUTH_TOKEN || '';
-
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 let dbClient = null;
 let db = null;
 
+function getCleanMongoUri() {
+  const raw = process.env.MONGODB_URI || '';
+  // Strip optional surrounding single/double quotes or leading/trailing whitespace
+  return raw.trim().replace(/^["']|["']$/g, '');
+}
+
+function getDatabaseName() {
+  return (process.env.DB_NAME || 'billkaro').trim();
+}
+
 async function getDatabase() {
-  if (!dbClient) {
-    dbClient = new MongoClient(MONGODB_URI);
-    await dbClient.connect();
-    db = dbClient.db(DB_NAME);
-    console.log(`Connected successfully to MongoDB database: ${DB_NAME}`);
+  const uri = getCleanMongoUri();
+  const dbName = getDatabaseName();
+
+  if (!uri) {
+    throw new Error('MONGODB_URI environment variable is missing or empty.');
   }
-  return db;
+
+  // If already connected and active, return cached DB
+  if (db && dbClient) {
+    return db;
+  }
+
+  try {
+    const client = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 8000,
+      connectTimeoutMS: 10000
+    });
+
+    await client.connect();
+    dbClient = client;
+    db = client.db(dbName);
+    console.log(`Connected successfully to MongoDB database: ${dbName}`);
+    return db;
+  } catch (err) {
+    // Reset so subsequent requests can retry cleanly
+    dbClient = null;
+    db = null;
+    throw err;
+  }
 }
 
 // Token Verification Middleware (optional security layer)
 function authMiddleware(req, res, next) {
-  if (!GATEWAY_AUTH_TOKEN) return next();
+  const gatewayToken = (process.env.GATEWAY_AUTH_TOKEN || '').trim();
+  if (!gatewayToken) return next();
   const authHeader = req.headers['authorization'] || req.headers['apikey'] || req.headers['api-key'];
   const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '').trim() : '';
-  if (token !== GATEWAY_AUTH_TOKEN) {
+  if (token !== gatewayToken) {
     return res.status(401).json({ error: 'Unauthorized: Invalid gateway token' });
   }
   next();
 }
 
-// 1. Health & Status Check
+// 0. Root Endpoint: Quick check to verify server is responding
+app.get('/', (req, res) => {
+  const hasUri = Boolean(getCleanMongoUri());
+  res.json({
+    status: 'online',
+    service: 'BillKaro Cloud Sync Gateway',
+    version: '1.0.0',
+    databaseConfigured: hasUri,
+    databaseName: getDatabaseName(),
+    endpoints: {
+      health: '/health',
+      pull: '/api/sync/pull?collection=invoices',
+      push: '/api/sync/push'
+    },
+    timestamp: Date.now()
+  });
+});
+
+// 1. Health & Database Connectivity Check
 app.get('/health', async (req, res) => {
+  const uri = getCleanMongoUri();
+  const dbName = getDatabaseName();
+
+  if (!uri) {
+    return res.status(503).json({
+      status: 'waiting_for_mongodb_uri',
+      service: 'BillKaro Cloud Sync Gateway',
+      message: 'Server is running, but MONGODB_URI environment variable is not configured on your hosting platform (Render).',
+      timestamp: Date.now()
+    });
+  }
+
   try {
     const database = await getDatabase();
+    if (!database) {
+      throw new Error('Database instance is null after connection attempt.');
+    }
     await database.command({ ping: 1 });
     res.json({
       status: 'ok',
       service: 'BillKaro Cloud Sync Gateway',
-      database: DB_NAME,
+      database: dbName,
+      message: 'MongoDB connected successfully',
       timestamp: Date.now()
     });
   } catch (err) {
+    const errMsg = err.message || '';
+    let suggestion = 'Check your connection string credentials.';
+    if (errMsg.includes('bad auth') || errMsg.includes('Authentication failed')) {
+      suggestion = 'Authentication failed. Please verify your MongoDB username and password in MONGODB_URI on Render.';
+    } else if (errMsg.includes('Server selection timed out') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ECONNREFUSED')) {
+      suggestion = 'Connection timed out. In MongoDB Atlas, go to Network Access -> Add IP Address -> choose "Allow Access from Anywhere" (0.0.0.0/0).';
+    }
+
     res.status(503).json({
       status: 'error',
       message: 'Database connection failed',
-      error: err.message
+      error: errMsg,
+      help: suggestion
     });
   }
 });
