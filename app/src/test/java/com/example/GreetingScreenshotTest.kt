@@ -1,7 +1,7 @@
 package com.example
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import com.example.ui.components.AnimatedStatCard
@@ -31,7 +31,7 @@ class GreetingScreenshotTest {
         AnimatedStatCard(
           title = "Total Sales",
           value = "₹1,24,000",
-          icon = Icons.Default.TrendingUp,
+          icon = Icons.AutoMirrored.Filled.TrendingUp,
           iconBgColor = SleekPrimaryContainer,
           iconColor = SleekOnPrimaryContainer,
           badgeText = "Monthly"
