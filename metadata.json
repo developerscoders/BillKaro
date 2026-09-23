@@ -1,0 +1,6 @@
+{
+  "name": "BillKaro",
+  "description": "Smart billing, invoicing, GST tracking, inventory, customer management & camera OCR scanning for Indian businesses.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
